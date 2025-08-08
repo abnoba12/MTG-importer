@@ -3,8 +3,12 @@
 
 import argparse
 import csv
+import json
 from decimal import Decimal, InvalidOperation
-from typing import Optional
+from typing import Optional, Dict, Tuple
+from urllib.error import URLError, HTTPError
+from urllib.parse import quote
+from urllib.request import urlopen
 
 # `pyodbc` is only required when actually inserting into the database.
 try:
@@ -39,10 +43,10 @@ def build_conn_str(server: str, database: str, user: str, password: str) -> str:
 INSERT_SQL = (
     """
     INSERT INTO dbo.Cards
-        (Name, SetCode, SetName, CollectorNumber, Foil, Rarity, ManaBoxID,
+        (Name, SetCode, SetName, CollectorNumber, Foil, Rarity, Legendary, ManaBoxID,
          ScryfallID, PurchasePrice, Misprint, Altered, Condition, Language,
          PurchasePriceCurrency, Location, CardType, DoubleSided)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 )
 
@@ -65,11 +69,48 @@ def parse_decimal(value: str) -> Decimal:
         return Decimal("0")
 
 
+_legendary_cache: Dict[Tuple[Optional[str], Optional[str], Optional[str]], Optional[int]] = {}
+
+
+def fetch_legendary(
+    scryfall_id: Optional[str], name: Optional[str], set_code: Optional[str]
+) -> Optional[int]:
+    """Return 1 if the card is legendary, 0 if not, or None if unknown."""
+
+    key = (scryfall_id, name, set_code)
+    if key in _legendary_cache:
+        return _legendary_cache[key]
+
+    try:
+        if scryfall_id:
+            url = f"https://api.scryfall.com/cards/{scryfall_id}"
+        else:
+            if not name:
+                return None
+            qname = quote(name)
+            url = f"https://api.scryfall.com/cards/named?exact={qname}"
+            if set_code:
+                url += f"&set={quote(set_code)}"
+        with urlopen(url) as resp:
+            data = json.load(resp)
+    except (URLError, HTTPError, json.JSONDecodeError):
+        result = None
+    else:
+        type_line = data.get("type_line", "")
+        result = 1 if "Legendary" in type_line else 0
+
+    _legendary_cache[key] = result
+    return result
+
+
 def read_rows(csv_path):
     with open(csv_path, newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
             qty = parse_int(row.get("Quantity", 1)) or 1
+            legendary = fetch_legendary(
+                row.get("Scryfall ID"), row.get("Name"), row.get("Set code")
+            )
             for _ in range(qty):
                 yield (
                     row.get("Name"),
@@ -78,6 +119,7 @@ def read_rows(csv_path):
                     parse_int(row.get("Collector number")),
                     row.get("Foil", "normal"),
                     row.get("Rarity"),
+                    legendary,
                     parse_int(row.get("ManaBox ID")),
                     row.get("Scryfall ID"),
                     parse_decimal(row.get("Purchase price")),
@@ -92,7 +134,7 @@ def read_rows(csv_path):
                 )
 
 
-def main(
+def import_csv(
     path: str,
     dry_run: bool = False,
     server: Optional[str] = None,
@@ -119,28 +161,71 @@ def main(
         conn.commit()
 
 
+def populate_legendary(
+    server: str,
+    database: str,
+    user: str,
+    password: str,
+) -> None:
+    """Populate the Legendary column for existing cards lacking a value."""
+
+    if pyodbc is None:
+        raise ImportError("pyodbc is required for database insertion")
+
+    conn_str = build_conn_str(server, database, user, password)
+    with pyodbc.connect(conn_str) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT id, ScryfallID, Name, SetCode FROM dbo.Cards WHERE Legendary IS NULL"
+        )
+        rows = cursor.fetchall()
+        for card_id, scryfall_id, name, set_code in rows:
+            legendary = fetch_legendary(scryfall_id, name, set_code)
+            if legendary is not None:
+                cursor.execute(
+                    "UPDATE dbo.Cards SET Legendary = ? WHERE id = ?",
+                    legendary,
+                    card_id,
+                )
+        conn.commit()
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Import ManaBox CSV into SQL Server")
-    parser.add_argument("csv_file", help="Path to ManaBox CSV file")
-    parser.add_argument("--dry-run", action="store_true", help="Parse file but do not insert")
-    parser.add_argument("--server", help="SQL Server host[,port]")
-    parser.add_argument("--database", default="MTG", help="Database name")
-    parser.add_argument("--user", help="Database user")
-    parser.add_argument("--password", help="Database password")
+    parser = argparse.ArgumentParser(description="Tools for MTG card imports")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    imp_parser = subparsers.add_parser("import", help="Import ManaBox CSV into SQL Server")
+    imp_parser.add_argument("csv_file", help="Path to ManaBox CSV file")
+    imp_parser.add_argument("--dry-run", action="store_true", help="Parse file but do not insert")
+    imp_parser.add_argument("--server", help="SQL Server host[,port]")
+    imp_parser.add_argument("--database", default="MTG", help="Database name")
+    imp_parser.add_argument("--user", help="Database user")
+    imp_parser.add_argument("--password", help="Database password")
+
+    leg_parser = subparsers.add_parser(
+        "populate-legendary", help="Populate Legendary column for existing cards"
+    )
+    leg_parser.add_argument("--server", required=True, help="SQL Server host[,port]")
+    leg_parser.add_argument("--database", default="MTG", help="Database name")
+    leg_parser.add_argument("--user", required=True, help="Database user")
+    leg_parser.add_argument("--password", required=True, help="Database password")
+
     args = parser.parse_args()
 
-    if not args.dry_run:
-        missing = [name for name in ("server", "user", "password") if getattr(args, name) is None]
-        if missing:
-            parser.error(
-                "--server, --user, and --password are required unless --dry-run is specified"
-            )
-
-    main(
-        args.csv_file,
-        args.dry_run,
-        args.server,
-        args.database,
-        args.user,
-        args.password,
-    )
+    if args.command == "import":
+        if not args.dry_run:
+            missing = [name for name in ("server", "user", "password") if getattr(args, name) is None]
+            if missing:
+                imp_parser.error(
+                    "--server, --user, and --password are required unless --dry-run is specified"
+                )
+        import_csv(
+            args.csv_file,
+            args.dry_run,
+            args.server,
+            args.database,
+            args.user,
+            args.password,
+        )
+    elif args.command == "populate-legendary":
+        populate_legendary(args.server, args.database, args.user, args.password)
