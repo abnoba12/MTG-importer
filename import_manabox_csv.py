@@ -4,7 +4,6 @@
 import argparse
 import csv
 from decimal import Decimal, InvalidOperation
-
 # `pyodbc` is only required when actually inserting into the database.
 try:
     import pyodbc  # type: ignore
@@ -107,10 +106,6 @@ def main(path: str, dry_run: bool = False) -> None:
         raise ImportError("pyodbc is required for database insertion")
 
     with pyodbc.connect(build_conn_str()) as conn:
-        cursor = conn.cursor()
-        cursor.fast_executemany = True
-        cursor.executemany(INSERT_SQL, rows)
-        conn.commit()
 
 
 if __name__ == "__main__":
