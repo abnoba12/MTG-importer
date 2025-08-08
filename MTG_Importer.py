@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import ManaBox CSV data into SQL Server."""
+"""Import ManaBox CSV data, including proxies, into SQL Server."""
 
 import argparse
 import csv
@@ -103,7 +103,12 @@ def fetch_legendary(
     return result
 
 
-def read_rows(csv_path):
+def read_rows(
+    csv_path: str,
+    location: str = "Bulk",
+    card_type: str = "Origional",
+    purchase_price_override: Optional[Decimal] = None,
+):
     with open(csv_path, newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
@@ -112,6 +117,11 @@ def read_rows(csv_path):
                 row.get("Scryfall ID"), row.get("Name"), row.get("Set code")
             )
             for _ in range(qty):
+                purchase_price = (
+                    parse_decimal(row.get("Purchase price"))
+                    if purchase_price_override is None
+                    else purchase_price_override
+                )
                 yield (
                     row.get("Name"),
                     row.get("Set code"),
@@ -122,14 +132,14 @@ def read_rows(csv_path):
                     legendary,
                     parse_int(row.get("ManaBox ID")),
                     row.get("Scryfall ID"),
-                    parse_decimal(row.get("Purchase price")),
+                    purchase_price,
                     parse_bool(row.get("Misprint", "false")),
                     parse_bool(row.get("Altered", "false")),
                     row.get("Condition", "near_mint"),
                     row.get("Language", "en"),
                     row.get("Purchase price currency", "USD"),
-                    "Bulk",
-                    "Origional",
+                    location,
+                    card_type,
                     1 if "//" in (row.get("Name") or "") else 0,
                 )
 
@@ -141,8 +151,11 @@ def import_csv(
     database: Optional[str] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
+    location: str = "Bulk",
+    card_type: str = "Origional",
+    purchase_price_override: Optional[Decimal] = None,
 ) -> None:
-    rows = list(read_rows(path))
+    rows = list(read_rows(path, location, card_type, purchase_price_override))
     if dry_run:
         print(f"Prepared {len(rows)} rows")
         return
@@ -202,6 +215,17 @@ if __name__ == "__main__":
     imp_parser.add_argument("--user", help="Database user")
     imp_parser.add_argument("--password", help="Database password")
 
+    proxy_parser = subparsers.add_parser(
+        "import-proxies", help="Import proxy CSV into SQL Server"
+    )
+    proxy_parser.add_argument("csv_file", help="Path to ManaBox CSV file")
+    proxy_parser.add_argument("--location", required=True, help="Location to store proxies")
+    proxy_parser.add_argument("--dry-run", action="store_true", help="Parse file but do not insert")
+    proxy_parser.add_argument("--server", help="SQL Server host[,port]")
+    proxy_parser.add_argument("--database", default="MTG", help="Database name")
+    proxy_parser.add_argument("--user", help="Database user")
+    proxy_parser.add_argument("--password", help="Database password")
+
     leg_parser = subparsers.add_parser(
         "populate-legendary", help="Populate Legendary column for existing cards"
     )
@@ -226,6 +250,24 @@ if __name__ == "__main__":
             args.database,
             args.user,
             args.password,
+        )
+    elif args.command == "import-proxies":
+        if not args.dry_run:
+            missing = [name for name in ("server", "user", "password") if getattr(args, name) is None]
+            if missing:
+                proxy_parser.error(
+                    "--server, --user, and --password are required unless --dry-run is specified"
+                )
+        import_csv(
+            args.csv_file,
+            args.dry_run,
+            args.server,
+            args.database,
+            args.user,
+            args.password,
+            location=args.location,
+            card_type="BW Proxy",
+            purchase_price_override=Decimal("0"),
         )
     elif args.command == "populate-legendary":
         populate_legendary(args.server, args.database, args.user, args.password)
