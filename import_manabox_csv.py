@@ -4,21 +4,37 @@
 import argparse
 import csv
 from decimal import Decimal, InvalidOperation
+from typing import Optional
+
 # `pyodbc` is only required when actually inserting into the database.
 try:
     import pyodbc  # type: ignore
 except ModuleNotFoundError:  # pragma: no cover - allows dry-run without driver
     pyodbc = None
 
-# Connection details
-CONN_STR = (
-    "DRIVER={ODBC Driver 18 for SQL Server};"
-    "SERVER=projectmaster,8089;"
-    "DATABASE=MTG;"
-    "UID=SA;"
-    "PWD=R9DL337kY^QC^MBbel7j;"
-    "TrustServerCertificate=yes;"
-)
+
+def build_conn_str(server: str, database: str, user: str, password: str) -> str:
+    """Choose an available SQL Server ODBC driver and build a connection string."""
+
+    if pyodbc is None:
+        raise ImportError("pyodbc is required for database insertion")
+
+    # Look for any installed Microsoft ODBC driver for SQL Server, preferring the latest.
+    drivers = [d for d in pyodbc.drivers() if "SQL Server" in d]
+    if not drivers:
+        raise RuntimeError(
+            "No suitable ODBC SQL Server driver found. Install 'ODBC Driver 17 for SQL Server' or newer."
+        )
+    driver = sorted(drivers)[-1]
+
+    return (
+        f"DRIVER={{{driver}}};"
+        f"SERVER={server};"
+        f"DATABASE={database};"
+        f"UID={user};"
+        f"PWD={password};"
+        "TrustServerCertificate=yes;"
+    )
 
 INSERT_SQL = (
     """
@@ -76,7 +92,14 @@ def read_rows(csv_path):
                 )
 
 
-def main(path: str, dry_run: bool = False) -> None:
+def main(
+    path: str,
+    dry_run: bool = False,
+    server: Optional[str] = None,
+    database: Optional[str] = None,
+    user: Optional[str] = None,
+    password: Optional[str] = None,
+) -> None:
     rows = list(read_rows(path))
     if dry_run:
         print(f"Prepared {len(rows)} rows")
@@ -85,7 +108,11 @@ def main(path: str, dry_run: bool = False) -> None:
     if pyodbc is None:
         raise ImportError("pyodbc is required for database insertion")
 
-    with pyodbc.connect(CONN_STR) as conn:
+    if None in {server, database, user, password}:
+        raise ValueError("Database connection details are required unless --dry-run is used")
+
+    conn_str = build_conn_str(server, database, user, password)
+    with pyodbc.connect(conn_str) as conn:
         cursor = conn.cursor()
         cursor.fast_executemany = True
         cursor.executemany(INSERT_SQL, rows)
@@ -96,5 +123,24 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Import ManaBox CSV into SQL Server")
     parser.add_argument("csv_file", help="Path to ManaBox CSV file")
     parser.add_argument("--dry-run", action="store_true", help="Parse file but do not insert")
+    parser.add_argument("--server", help="SQL Server host[,port]")
+    parser.add_argument("--database", default="MTG", help="Database name")
+    parser.add_argument("--user", help="Database user")
+    parser.add_argument("--password", help="Database password")
     args = parser.parse_args()
-    main(args.csv_file, args.dry_run)
+
+    if not args.dry_run:
+        missing = [name for name in ("server", "user", "password") if getattr(args, name) is None]
+        if missing:
+            parser.error(
+                "--server, --user, and --password are required unless --dry-run is specified"
+            )
+
+    main(
+        args.csv_file,
+        args.dry_run,
+        args.server,
+        args.database,
+        args.user,
+        args.password,
+    )
