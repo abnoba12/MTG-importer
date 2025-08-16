@@ -4,6 +4,7 @@
 import argparse
 import csv
 import json
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional, Dict, Tuple
 from urllib.error import URLError, HTTPError
@@ -45,8 +46,8 @@ INSERT_SQL = (
     INSERT INTO dbo.Cards
         (Name, SetCode, SetName, CollectorNumber, Foil, Rarity, Legendary, ManaBoxID,
          ScryfallID, PurchasePrice, Misprint, Altered, Condition, Language,
-         PurchasePriceCurrency, Location, CardType, DoubleSided)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         PurchasePriceCurrency, Location, CardType, DoubleSided, CreatedDate)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 )
 
@@ -141,6 +142,7 @@ def read_rows(
                     location,
                     card_type,
                     1 if "//" in (row.get("Name") or "") else 0,
+                    datetime.now(),
                 )
 
 

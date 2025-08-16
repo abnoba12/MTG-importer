@@ -30,6 +30,7 @@ It also offers a command to backfill card metadata from the Scryfall API.
    - `--cardtype` (default `Original`)
    - `--no-setpurchaseprice` to override all purchase prices with `0`
      (default behaviour uses the value from the CSV)
+   Each imported record also sets `CreatedDate` to the current timestamp.
 3. To backfill the `Legendary` flag for cards already in the database:
    ```bash
    python MTG_Importer.py populate-legendary --server <host[,port]> \
