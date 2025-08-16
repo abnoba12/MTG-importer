@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import ManaBox CSV data, including proxies, into SQL Server."""
+"""Import ManaBox CSV data into SQL Server."""
 
 import argparse
 import csv
@@ -106,7 +106,7 @@ def fetch_legendary(
 def read_rows(
     csv_path: str,
     location: str = "Bulk",
-    card_type: str = "Origional",
+    card_type: str = "Original",
     purchase_price_override: Optional[Decimal] = None,
 ):
     with open(csv_path, newline="", encoding="utf-8") as fh:
@@ -152,7 +152,7 @@ def import_csv(
     user: Optional[str] = None,
     password: Optional[str] = None,
     location: str = "Bulk",
-    card_type: str = "Origional",
+    card_type: str = "Original",
     purchase_price_override: Optional[Decimal] = None,
 ) -> None:
     rows = list(read_rows(path, location, card_type, purchase_price_override))
@@ -214,17 +214,16 @@ if __name__ == "__main__":
     imp_parser.add_argument("--database", default="MTG", help="Database name")
     imp_parser.add_argument("--user", help="Database user")
     imp_parser.add_argument("--password", help="Database password")
-
-    proxy_parser = subparsers.add_parser(
-        "import-proxies", help="Import proxy CSV into SQL Server"
+    imp_parser.add_argument("--location", default="Bulk", help="Location to store cards")
+    imp_parser.add_argument(
+        "--cardtype", default="Original", help="Value for CardType column"
     )
-    proxy_parser.add_argument("csv_file", help="Path to ManaBox CSV file")
-    proxy_parser.add_argument("--location", required=True, help="Location to store proxies")
-    proxy_parser.add_argument("--dry-run", action="store_true", help="Parse file but do not insert")
-    proxy_parser.add_argument("--server", help="SQL Server host[,port]")
-    proxy_parser.add_argument("--database", default="MTG", help="Database name")
-    proxy_parser.add_argument("--user", help="Database user")
-    proxy_parser.add_argument("--password", help="Database password")
+    imp_parser.add_argument(
+        "--setpurchaseprice",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Use purchase price from CSV (disable with --no-setpurchaseprice)",
+    )
 
     leg_parser = subparsers.add_parser(
         "populate-legendary", help="Populate Legendary column for existing cards"
@@ -250,24 +249,11 @@ if __name__ == "__main__":
             args.database,
             args.user,
             args.password,
-        )
-    elif args.command == "import-proxies":
-        if not args.dry_run:
-            missing = [name for name in ("server", "user", "password") if getattr(args, name) is None]
-            if missing:
-                proxy_parser.error(
-                    "--server, --user, and --password are required unless --dry-run is specified"
-                )
-        import_csv(
-            args.csv_file,
-            args.dry_run,
-            args.server,
-            args.database,
-            args.user,
-            args.password,
             location=args.location,
-            card_type="BW Proxy",
-            purchase_price_override=Decimal("0"),
+            card_type=args.cardtype,
+            purchase_price_override=(
+                None if args.setpurchaseprice else Decimal("0")
+            ),
         )
     elif args.command == "populate-legendary":
         populate_legendary(args.server, args.database, args.user, args.password)

@@ -1,8 +1,7 @@
 # MTG-importer
 
 A simple script to import ManaBox CSV exports into the `MTG` SQL Server database.
-It also offers commands to import proxies and to backfill card metadata from the
-Scryfall API.
+It also offers a command to backfill card metadata from the Scryfall API.
 
 ## Setup
 
@@ -26,20 +25,19 @@ Scryfall API.
    Use `--dry-run` to see how many rows would be prepared without touching the database.
    During import, the script queries the [Scryfall API](https://scryfall.com/docs/api)
    to determine whether each card is legendary.
-3. To import proxies (cards you don't own yet), specifying their storage location and
-   automatically setting the card type to `BW Proxy` and purchase price to 0:
-   ```bash
-   python MTG_Importer.py import-proxies <path-to-csv> --location <where> \
-       --server <host[,port]> --database MTG --user <username> --password <password>
-   ```
-4. To backfill the `Legendary` flag for cards already in the database:
+   Optional parameters:
+   - `--location` (default `Bulk`)
+   - `--cardtype` (default `Original`)
+   - `--no-setpurchaseprice` to override all purchase prices with `0`
+     (default behaviour uses the value from the CSV)
+3. To backfill the `Legendary` flag for cards already in the database:
    ```bash
    python MTG_Importer.py populate-legendary --server <host[,port]> \
        --database MTG --user <username> --password <password>
    ```
 
 The script automatically selects an installed SQL Server ODBC driver. The `import`
-command assumes cards should be stored in location `Bulk` with type `Origional`. The
-`import-proxies` command requires a location and sets type to `BW Proxy`. Cards with
-"//" in their name are marked as double sided. If the Scryfall API cannot be reached,
-the `Legendary` column is left null.
+command assumes cards should be stored in location `Bulk` with type `Original` and
+uses the purchase price from the CSV unless `--no-setpurchaseprice` is given. Cards
+with "//" in their name are marked as double sided. If the Scryfall API cannot be
+reached, the `Legendary` column is left null.
