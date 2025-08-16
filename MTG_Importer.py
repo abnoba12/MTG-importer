@@ -72,6 +72,8 @@ def parse_decimal(value: str) -> Decimal:
 
 _legendary_cache: Dict[Tuple[Optional[str], Optional[str], Optional[str]], Optional[int]] = {}
 
+IGNORED_CARD_NAMES = {"Swamp", "Island", "Plains", "Mountain", "Forest"}
+
 
 def fetch_legendary(
     scryfall_id: Optional[str], name: Optional[str], set_code: Optional[str]
@@ -213,7 +215,11 @@ def compare_cards(
     user: str,
     password: str,
 ) -> None:
-    """Compare card names from a text file and the database."""
+    """Compare card names from a text file and the database.
+
+    Basic lands (Swamp, Island, Plains, Mountain, Forest) are ignored in all
+    comparisons.
+    """
 
     if pyodbc is None:
         raise ImportError("pyodbc is required for database access")
@@ -239,7 +245,7 @@ def compare_cards(
             except ValueError:
                 continue
             name = remainder.split("(")[0].strip()
-            if name:
+            if name and name not in IGNORED_CARD_NAMES:
                 names_in_file.add(name)
 
     conn_str = build_conn_str(server, database, user, password)
@@ -249,7 +255,9 @@ def compare_cards(
             f"SELECT Name FROM {table} WHERE Location = ? AND CardType <> 'Backer'",
             location,
         )
-        names_in_db = {row[0] for row in cursor.fetchall()}
+        names_in_db = {
+            row[0] for row in cursor.fetchall() if row[0] not in IGNORED_CARD_NAMES
+        }
 
     db_only = sorted(names_in_db - names_in_file)
     file_only = sorted(names_in_file - names_in_db)

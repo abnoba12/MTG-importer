@@ -46,7 +46,8 @@ It also offers a command to backfill card metadata from the Scryfall API.
    - `--databasetable` (default `MTG.dbo.Cards`)
 
    The command prints cards that are only in the database, only in the file,
-   and those present in both.
+   and those present in both. Basic lands (Swamp, Island, Plains, Mountain,
+   Forest) are ignored in all comparisons.
 
 The script automatically selects an installed SQL Server ODBC driver. The `import`
 command assumes cards should be stored in location `Bulk` with type `Original` and
