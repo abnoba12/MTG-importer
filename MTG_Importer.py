@@ -6,7 +6,7 @@ import csv
 import json
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Set
 from urllib.error import URLError, HTTPError
 from urllib.parse import quote
 from urllib.request import urlopen
@@ -71,6 +71,8 @@ def parse_decimal(value: str) -> Decimal:
 
 
 _legendary_cache: Dict[Tuple[Optional[str], Optional[str], Optional[str]], Optional[int]] = {}
+
+IGNORED_CARD_NAMES = {"Swamp", "Island", "Plains", "Mountain", "Forest"}
 
 
 def fetch_legendary(
@@ -205,6 +207,75 @@ def populate_legendary(
         conn.commit()
 
 
+def compare_cards(
+    text_file: str,
+    location: str,
+    server: str,
+    databasetable: str,
+    user: str,
+    password: str,
+) -> None:
+    """Compare card names from a text file and the database.
+
+    Basic lands (Swamp, Island, Plains, Mountain, Forest) are ignored in all
+    comparisons.
+    """
+
+    if pyodbc is None:
+        raise ImportError("pyodbc is required for database access")
+
+    parts = databasetable.split(".")
+    if len(parts) < 2:
+        raise ValueError("databasetable must be in the form Database.Schema.Table")
+    database = parts[0]
+    table = ".".join(parts[1:])
+
+    names_in_file: Set[str] = set()
+    with open(text_file, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith("//"):
+                if line.startswith("// MAYBEBOARD"):
+                    break
+                continue
+            if not line:
+                continue
+            try:
+                _, remainder = line.split(" ", 1)
+            except ValueError:
+                continue
+            name = remainder.split("(")[0].strip()
+            if name and name not in IGNORED_CARD_NAMES:
+                names_in_file.add(name)
+
+    conn_str = build_conn_str(server, database, user, password)
+    with pyodbc.connect(conn_str) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT Name FROM {table} WHERE Location = ? AND CardType <> 'Backer'",
+            location,
+        )
+        names_in_db = {
+            row[0] for row in cursor.fetchall() if row[0] not in IGNORED_CARD_NAMES
+        }
+
+    db_only = sorted(names_in_db - names_in_file)
+    file_only = sorted(names_in_file - names_in_db)
+    both = sorted(names_in_file & names_in_db)
+
+    print("Cards in database but not in file:")
+    for name in db_only:
+        print(name)
+
+    print("\nCards in file but not in database:")
+    for name in file_only:
+        print(name)
+
+    print("\nCards in both:")
+    for name in both:
+        print(name)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Tools for MTG card imports")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -235,6 +306,20 @@ if __name__ == "__main__":
     leg_parser.add_argument("--user", required=True, help="Database user")
     leg_parser.add_argument("--password", required=True, help="Database password")
 
+    cmp_parser = subparsers.add_parser(
+        "compare", help="Compare card names in a text file with the database"
+    )
+    cmp_parser.add_argument("text_file", help="Path to text file")
+    cmp_parser.add_argument("--location", required=True, help="Location value to query")
+    cmp_parser.add_argument("--server", required=True, help="SQL Server host[,port]")
+    cmp_parser.add_argument(
+        "--databasetable",
+        default="MTG.dbo.Cards",
+        help="Database and table in the form Database.Schema.Table",
+    )
+    cmp_parser.add_argument("--user", required=True, help="Database user")
+    cmp_parser.add_argument("--password", required=True, help="Database password")
+
     args = parser.parse_args()
 
     if args.command == "import":
@@ -259,3 +344,12 @@ if __name__ == "__main__":
         )
     elif args.command == "populate-legendary":
         populate_legendary(args.server, args.database, args.user, args.password)
+    elif args.command == "compare":
+        compare_cards(
+            args.text_file,
+            args.location,
+            args.server,
+            args.databasetable,
+            args.user,
+            args.password,
+        )

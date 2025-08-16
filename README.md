@@ -37,6 +37,18 @@ It also offers a command to backfill card metadata from the Scryfall API.
        --database MTG --user <username> --password <password>
    ```
 
+4. Compare a text list of cards with those stored in the database:
+   ```bash
+   python MTG_Importer.py compare <path-to-file> --location <location> \
+       --server <host[,port]> --user <username> --password <password>
+   ```
+   Optional parameter:
+   - `--databasetable` (default `MTG.dbo.Cards`)
+
+   The command prints cards that are only in the database, only in the file,
+   and those present in both. Basic lands (Swamp, Island, Plains, Mountain,
+   Forest) are ignored in all comparisons.
+
 The script automatically selects an installed SQL Server ODBC driver. The `import`
 command assumes cards should be stored in location `Bulk` with type `Original` and
 uses the purchase price from the CSV unless `--no-setpurchaseprice` is given. Cards
